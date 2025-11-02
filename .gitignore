@@ -1,0 +1,41 @@
+# Virtual environments
+venv/
+venv_*/
+env/
+ENV/
+.venv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Configuration files with credentials
+config.env
+*.env
+!config.env.template
+
+# CSV data files
+*.csv
+!example.csv
+
+# Log files
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test outputs
+test_output/
+reports/
+*.xlsx
