@@ -2,6 +2,17 @@
 
 A collection of Python scripts for synchronizing AWS VPC data with InfoBlox IPAM systems. These scripts support automated and interactive modes, with dry-run capabilities for safe testing.
 
+## 📚 Documentation
+
+| Document | Description |
+|----------|-------------|
+| **[QUICKSTART.md](./QUICKSTART.md)** | ⚡ **Start here!** Get up and running in 5 minutes |
+| **[ARCHITECTURE.md](./ARCHITECTURE.md)** | 🏗️ System architecture, data flow, and technical details |
+| **[SCRIPTS_COMPARISON.md](./SCRIPTS_COMPARISON.md)** | 📊 Detailed feature comparison of all scripts |
+| **[README.md](./README.md)** | 📖 This file - comprehensive documentation |
+
+**👉 New users:** Start with [QUICKSTART.md](./QUICKSTART.md) for the fastest path to success!
+
 ## 📋 Overview
 
 This repository contains 7 Python scripts for managing AWS VPC data imports to InfoBlox:
