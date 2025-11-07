@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Quick Start Guide
+    url: https://github.com/tshoush/aws-infoblox-vpc-scripts/blob/main/QUICKSTART.md
+    about: Getting started in 5 minutes
+  - name: Architecture Documentation
+    url: https://github.com/tshoush/aws-infoblox-vpc-scripts/blob/main/ARCHITECTURE.md
+    about: Technical architecture and design details
+  - name: Scripts Comparison
+    url: https://github.com/tshoush/aws-infoblox-vpc-scripts/blob/main/SCRIPTS_COMPARISON.md
+    about: Compare features across all scripts
