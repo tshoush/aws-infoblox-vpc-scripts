@@ -283,7 +283,7 @@ When making changes, update `CHANGELOG.md`:
 
 ### Creating Release Notes
 
-For major changes, update `RELEASE_NOTES.md`:
+For major changes, update `CONFLUENCE_RELEASE_NOTES.md`:
 
 ```markdown
 ## Version X.Y.Z - Feature Name
@@ -411,4 +411,4 @@ Your contributions make this project better for everyone. We appreciate your tim
 - [Architecture Documentation](./ARCHITECTURE.md)
 - [Scripts Comparison](./SCRIPTS_COMPARISON.md)
 - [Changelog](./CHANGELOG.md)
-- [Release Notes](./RELEASE_NOTES.md)
+- [Release Notes](./CONFLUENCE_RELEASE_NOTES.md)
