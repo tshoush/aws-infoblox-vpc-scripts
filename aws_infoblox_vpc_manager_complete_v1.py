@@ -24,12 +24,36 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import argparse
 import os
+import base64
+import subprocess
 from dotenv import load_dotenv
 import getpass
 import socket
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def fetch_csv_from_github(repo: str, path: str = 'vpc_data.csv', dest: str = 'vpc_data.csv') -> str:
+    """Download a file from a private GitHub repo using gh CLI credentials."""
+    try:
+        token = subprocess.check_output(['gh', 'auth', 'token'], text=True).strip()
+    except Exception as e:
+        raise RuntimeError(f"Could not get GitHub token via 'gh auth token': {e}")
+
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    headers = {
+        'Authorization': f'token {token}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+
+    content = base64.b64decode(response.json()['content'])
+    with open(dest, 'wb') as f:
+        f.write(content)
+
+    return dest
 
 # Configure logging
 logging.basicConfig(
@@ -114,7 +138,19 @@ def main():
         
         # Use command line argument if provided, otherwise use environment variable
         csv_file = args.csv_file if args.csv_file != 'vpc_data.csv' else csv_file_from_env
-        
+
+        # Fetch CSV from GitHub if configured
+        github_repo = os.getenv('GITHUB_REPO', '')
+        github_csv_path = os.getenv('GITHUB_CSV_PATH', 'vpc_data.csv')
+        if github_repo:
+            print(f"\n📥 Fetching {github_csv_path} from GitHub: {github_repo}")
+            try:
+                fetch_csv_from_github(github_repo, github_csv_path, csv_file)
+                print(f"   ✅ Downloaded to: {csv_file}")
+            except Exception as e:
+                logger.error(f"Failed to fetch CSV from GitHub: {e}")
+                return 1
+
         logger.info(f"Loading VPC data from {csv_file}...")
         
         # Initialize InfoBlox client
@@ -175,16 +211,60 @@ def main():
             if len(comparison_results['containers']) > 3:
                 print(f"   ... and {len(comparison_results['containers']) - 3} more")
         
+        # Always analyze Extended Attributes
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        print(f"\n🏷️  EXTENDED ATTRIBUTES ANALYSIS:")
+        ea_analysis = vpc_manager.ensure_required_eas(vpc_df, dry_run=True)
+        required_eas = ea_analysis['required_eas']
+        missing_eas = ea_analysis['missing_eas']
+        print(f"   🔢 Required EAs (from CSV Tags): {len(required_eas)}")
+        print(f"   ✅ Already exist in InfoBlox:   {len(required_eas) - len(missing_eas)}")
+        print(f"   ❌ Missing from InfoBlox:        {len(missing_eas)}")
+        if missing_eas:
+            print(f"\n   ⚠️  MISSING EXTENDED ATTRIBUTES (must exist before import):")
+            for ea in missing_eas:
+                print(f"      - {ea}")
+            ea_report_file = f"missing_eas_{timestamp}.txt"
+            with open(ea_report_file, 'w') as f:
+                f.write(f"Missing Extended Attributes Report - {timestamp}\n")
+                f.write(f"Required: {len(required_eas)}  |  Missing: {len(missing_eas)}\n\n")
+                f.write("MISSING (not in InfoBlox):\n")
+                for ea in missing_eas:
+                    f.write(f"  {ea}\n")
+                f.write("\nALL REQUIRED:\n")
+                for ea in required_eas:
+                    status = "MISSING" if ea in missing_eas else "exists"
+                    f.write(f"  [{status}] {ea}\n")
+            print(f"\n   📄 EA report written to: {ea_report_file}")
+            if not args.create_missing:
+                print(f"   💡 Run with --create-missing to automatically create these EAs and networks")
+        else:
+            print(f"   ✅ All required Extended Attributes exist in InfoBlox")
+
+        # Write missing networks report
+        if comparison_results['missing']:
+            missing_net_file = f"missing_networks_{timestamp}.csv"
+            missing_rows = []
+            for item in comparison_results['missing']:
+                vpc = item['vpc']
+                missing_rows.append({
+                    'CIDR': item['cidr'],
+                    'Name': vpc.get('Name', ''),
+                    'VpcId': vpc.get('VpcId', ''),
+                    'AccountId': vpc.get('AccountId', ''),
+                    'Region': vpc.get('Region', ''),
+                })
+            pd.DataFrame(missing_rows).to_csv(missing_net_file, index=False)
+            print(f"\n   📄 Missing networks written to: {missing_net_file}")
+
         # Handle create-missing flag
         if args.create_missing and comparison_results['missing']:
             print(f"\n🚀 CREATING MISSING NETWORKS:")
-            
-            # Ensure Extended Attributes exist
-            ea_analysis = vpc_manager.ensure_required_eas(vpc_df, dry_run=args.dry_run)
-            if args.dry_run:
-                print(f"   🏷️ Extended Attributes analysis: {len(ea_analysis['missing_eas'])} missing")
-            else:
-                print(f"   🏷️ Extended Attributes: {ea_analysis['created_count']} created, {ea_analysis['existing_count']} existed")
+
+            # Ensure Extended Attributes exist (actually create if needed)
+            if not args.dry_run:
+                ea_create = vpc_manager.ensure_required_eas(vpc_df, dry_run=False)
+                print(f"   🏷️ Extended Attributes: {ea_create['created_count']} created, {ea_create['existing_count']} existed")
             
             # Sort missing networks by priority (larger networks first)
             missing_with_priority = []
