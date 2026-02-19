@@ -7,472 +7,195 @@ Get started with AWS InfoBlox VPC Management Scripts in 5 minutes!
 Before you begin, ensure you have:
 
 - [ ] Python 3.8 or higher installed
-- [ ] Git installed
+- [ ] Git and [GitHub CLI (`gh`)](https://cli.github.com/) installed and authenticated
 - [ ] Access to InfoBlox Grid Master
 - [ ] InfoBlox credentials (username/password)
-- [ ] AWS VPC data exported to CSV
-- [ ] Terminal/command line access
+- [ ] AWS VPC data in CSV format (or access to the GitHub repo that holds it)
 
 ## 🚀 5-Minute Quick Start
 
-### Step 1: Clone the Repository (30 seconds)
+### Step 1: Clone the Repository
 
 ```bash
 git clone https://github.com/tshoush/aws-infoblox-vpc-scripts.git
 cd aws-infoblox-vpc-scripts
 ```
 
-### Step 2: Run Setup Script (2 minutes)
-
-We recommend starting with the **v1** script (most recent, best for automation):
+### Step 2: Run Setup Script
 
 ```bash
-cd setup
-./setup_v1.sh
+cd setup && ./setup_v1.sh && cd ..
 ```
 
-**What the setup script does:**
-- Prompts for your Python path (just press Enter for default)
-- Creates a virtual environment
-- Installs all dependencies
-- Shows you next steps
+The setup script creates a virtual environment and installs all dependencies.
 
-**Expected output:**
-```
-==========================================
-AWS InfoBlox VPC Manager Setup
-==========================================
-
-Enter the path to your Python executable (default: python3):
-✅ Found Python 3.11.5
-...
-✅ Setup completed successfully!
-```
-
-### Step 3: Configure Your Credentials (1 minute)
+### Step 3: Configure
 
 ```bash
-# Go back to the main directory
-cd ..
-
-# Copy the template
 cp config.env.template config.env
-
-# Edit with your credentials
-nano config.env
-# OR
-vim config.env
-# OR open in your favorite editor
 ```
 
-**Edit these values:**
+Edit `config.env` with your values:
+
 ```env
-GRID_MASTER=your-infoblox-server.com
+GRID_MASTER=192.168.1.224
 NETWORK_VIEW=default
-INFOBLOX_USERNAME=your-username
+USERNAME=admin
 PASSWORD=your-password
 CSV_FILE=vpc_data.csv
+
+# Optional: fetch vpc_data.csv automatically from a private GitHub repo
+GITHUB_REPO=tshoush/IBX-AWS_Sync
+GITHUB_CSV_PATH=vpc_data.csv
 ```
 
-**Save and close** the file.
+> **Note:** The config key is `USERNAME`, not `INFOBLOX_USERNAME`.
 
-### Step 4: Prepare Your CSV File (1 minute)
-
-Your CSV file should contain AWS VPC data with these columns:
-
-```csv
-VpcId,CidrBlock,State,Tags,Region,IsDefault
-vpc-12345,10.0.0.0/16,available,"{""Name"": ""Production VPC""}",us-east-1,False
-vpc-67890,10.1.0.0/16,available,"{""Name"": ""Development VPC""}",us-west-2,False
-```
-
-**Place your CSV file** in the repository directory (or specify path in config.env).
-
-### Step 5: Test Run (30 seconds)
+### Step 4: Test Run
 
 ```bash
-# Activate the virtual environment
 source venv/bin/activate
-
-# Run in dry-run mode (safe - no changes made)
 python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run
 ```
 
-**What you should see:**
+**Expected output:**
+
 ```
-🔗 Connecting to InfoBlox Grid Master: your-infoblox-server.com
+🤖 Running in non-interactive mode - reading configuration from file...
+✅ All configuration loaded from config.env
+
+📥 Fetching vpc_data.csv from GitHub: tshoush/IBX-AWS_Sync
+   ✅ Downloaded to: vpc_data.csv
+
+🔗 Connecting to InfoBlox Grid Master: 192.168.1.224
 🔗 InfoBlox client initialized, proceeding with operations...
 
 📊 ANALYSIS SUMMARY:
    📁 CSV file: vpc_data.csv
-   🔢 Total VPCs loaded: 10
+   🔢 Total VPCs loaded: 445
    🌐 Network view: default
 
 🔍 COMPARISON RESULTS:
-   ✅ Matching networks: 5
-   🔴 Missing networks: 5
-   ⚠️ Mismatches: 0
+   ✅ Matching networks: 61
+   🔴 Missing networks: 21
+   🟡 Tag discrepancies: 326
+   📦 Network containers: 37
+   ❌ Processing errors: 0
 
-[DRY-RUN] Would create network: 10.2.0.0/16
-[DRY-RUN] Would create network: 10.3.0.0/16
-...
+🏷️  EXTENDED ATTRIBUTES ANALYSIS:
+   🔢 Required EAs (from CSV Tags): 42
+   ✅ Already exist in InfoBlox:   39
+   ❌ Missing from InfoBlox:        3
+
+   ⚠️  MISSING EXTENDED ATTRIBUTES (must exist before import):
+      - environment
+      - owner
+      - project
+
+   📄 EA report written to: missing_eas_20260219_140527.txt
+   📄 Missing networks written to: missing_networks_20260219_140527.csv
 ```
 
-**🎉 Congratulations!** If you see output like above, everything is working!
+### Step 5: Review Reports
 
-## 🎯 Next Steps
+```bash
+# Which EAs are missing from InfoBlox
+cat missing_eas_*.txt
 
-### Option A: Create Missing Networks
+# Which VPC networks will be created
+cat missing_networks_*.csv
+```
 
-Once you've verified the dry-run output:
+### Step 6: Execute
+
+Once you're satisfied with the dry-run output:
 
 ```bash
 python aws_infoblox_vpc_manager_complete_v1.py -q --create-missing
 ```
 
-This will **actually create** the missing networks in InfoBlox.
+This will:
+1. Download the latest CSV from GitHub
+2. Create any missing Extended Attributes in InfoBlox
+3. Create the missing networks with AWS tags mapped to EAs
 
-### Option B: Run in Silent Mode (for automation)
+## 📥 GitHub CSV Source
 
-```bash
-python aws_infoblox_vpc_manager_complete_v1.py --silent --create-missing
-```
+If `GITHUB_REPO` is set in `config.env`, the script fetches the CSV automatically at each run using your `gh` CLI credentials. To update the data, push a new `vpc_data.csv` to the GitHub repo — the next script run will pick it up.
 
-Minimal output - perfect for cron jobs or scripts.
-
-### Option C: Use Interactive Mode (v2 script)
-
-```bash
-python aws_infoblox_vpc_manager_complete_v2.py -i --create-missing
-```
-
-Interactive prompts guide you through the process.
+To bypass GitHub and use a local CSV instead, comment out `GITHUB_REPO` in `config.env`.
 
 ## 📖 Common Commands
 
-### View Help
 ```bash
+# View help
 python aws_infoblox_vpc_manager_complete_v1.py --help
-```
 
-### Use Different CSV File
-```bash
+# Use a specific local CSV file
 python aws_infoblox_vpc_manager_complete_v1.py -q --csv-file my_vpcs.csv --dry-run
-```
 
-### Specify Network View
-```bash
+# Specify network view
 python aws_infoblox_vpc_manager_complete_v1.py -q --network-view "AWS_Production" --dry-run
-```
 
-### Check Logs
-```bash
-cat aws_infoblox_vpc_manager.log
-# OR
-tail -f aws_infoblox_vpc_manager.log  # Follow in real-time
+# Follow log in real-time
+tail -f aws_infoblox_vpc_manager.log
 ```
 
 ## 🔧 Troubleshooting
 
-### Problem: "Python executable not found"
+### "Missing values: USERNAME"
+The config key is `USERNAME`, not `INFOBLOX_USERNAME`. Check your `config.env`.
 
-**Solution:**
+### "Could not get GitHub token via 'gh auth token'"
+Run `gh auth login` to authenticate the GitHub CLI, then retry.
+
+### "No such file or directory: 'vpc_data.csv'"
+Either set `GITHUB_REPO` in `config.env` to fetch it automatically, or copy the CSV to the working directory manually.
+
+### "Connection refused" or cannot connect to InfoBlox
+Verify `GRID_MASTER` is reachable: `ping 192.168.1.224`. SSL verification is disabled by default for InfoBlox (common for internal servers).
+
+### "Module not found" errors
 ```bash
-# Find your Python installation
-which python3
-
-# Use the full path in setup script
-/usr/local/bin/python3 -m venv venv
-```
-
-### Problem: "Connection refused" or "Cannot connect to InfoBlox"
-
-**Solution:**
-1. Verify InfoBlox server address in config.env
-2. Test connectivity: `ping your-infoblox-server.com`
-3. Verify port 443 is accessible
-4. Check credentials are correct
-
-### Problem: "Permission denied" when running setup
-
-**Solution:**
-```bash
-chmod +x setup/setup_v1.sh
-./setup/setup_v1.sh
-```
-
-### Problem: "Module not found" errors
-
-**Solution:**
-```bash
-# Make sure virtual environment is activated
 source venv/bin/activate
-
-# Reinstall dependencies
 pip install -r setup/requirements_v1.txt
 ```
 
-### Problem: CSV parsing errors
+## 📁 Output Files
 
-**Solution:**
-1. Check CSV file format matches expected structure
-2. Ensure Tags column uses proper JSON format with double quotes
-3. Verify no special characters in CSV
+All files are written to the working directory (not a `reports/` subdirectory):
 
-**Valid format:**
-```csv
-vpc-123,10.0.0.0/16,available,"{""Name"": ""VPC""}",us-east-1,False
-```
-
-**Invalid format:**
-```csv
-vpc-123,10.0.0.0/16,available,{'Name': 'VPC'},us-east-1,False  ❌
-```
-
-## 📚 Learn More
-
-### Understanding the Scripts
-
-| Script | Best For | Key Feature |
-|--------|----------|-------------|
-| v1 (recommended) | Automation, CI/CD | Explicit `-q` flag |
-| v2 | Manual ops, Interactive | Quiet by default |
-| working | Simple tasks | Basic functionality |
-| prop_enhanced | Advanced needs | Overlap detection |
-
-**See [SCRIPTS_COMPARISON.md](./SCRIPTS_COMPARISON.md)** for detailed comparison.
-
-### Understand the Architecture
-
-**See [ARCHITECTURE.md](./ARCHITECTURE.md)** for:
-- System architecture diagrams
-- Data flow explanations
-- Component details
-- Integration patterns
-
-### Read Full Documentation
-
-**See [README.md](./README.md)** for:
-- Complete feature list
-- All command-line options
-- Configuration details
-- Advanced usage patterns
+| File | Description |
+|------|-------------|
+| `aws_infoblox_vpc_manager.log` | Full operation log |
+| `missing_eas_<timestamp>.txt` | EAs required by CSV Tags vs InfoBlox |
+| `missing_networks_<timestamp>.csv` | Networks in CSV not yet in InfoBlox |
+| `rejected_networks_<timestamp>.csv` | Networks skipped during creation (e.g. overlaps) |
 
 ## 🔄 Daily Workflow
 
-### 1. Morning Check (Dry-Run)
 ```bash
 cd aws-infoblox-vpc-scripts
 source venv/bin/activate
-python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run > daily_check.log
-```
 
-### 2. Review Output
-```bash
-grep "Missing networks" daily_check.log
-grep "ERROR" daily_check.log
-```
+# 1. Dry-run to see what's changed (also downloads latest CSV from GitHub)
+python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run
 
-### 3. Sync if Needed
-```bash
+# 2. Review
+cat missing_networks_*.csv
+cat missing_eas_*.txt
+
+# 3. Sync
 python aws_infoblox_vpc_manager_complete_v1.py -q --create-missing
-```
-
-### 4. Verify
-```bash
-# Check the log for success
-tail -50 aws_infoblox_vpc_manager.log
 ```
 
 ## 🤖 Automation Setup
 
-### Schedule with Cron
-
 ```bash
-# Edit crontab
-crontab -e
-
-# Add this line for daily sync at 2 AM
+# crontab -e
 0 2 * * * cd /path/to/aws-infoblox-vpc-scripts && source venv/bin/activate && python aws_infoblox_vpc_manager_complete_v1.py --silent --create-missing >> /var/log/infoblox-sync.log 2>&1
 ```
 
-### Schedule with systemd Timer
-
-Create `/etc/systemd/system/infoblox-sync.service`:
-```ini
-[Unit]
-Description=InfoBlox VPC Sync Service
-
-[Service]
-Type=oneshot
-User=your-user
-WorkingDirectory=/path/to/aws-infoblox-vpc-scripts
-ExecStart=/path/to/aws-infoblox-vpc-scripts/venv/bin/python aws_infoblox_vpc_manager_complete_v1.py --silent --create-missing
-```
-
-Create `/etc/systemd/system/infoblox-sync.timer`:
-```ini
-[Unit]
-Description=InfoBlox VPC Sync Timer
-
-[Timer]
-OnCalendar=daily
-OnCalendar=02:00
-
-[Install]
-WantedBy=timers.target
-```
-
-Enable and start:
-```bash
-sudo systemctl enable infoblox-sync.timer
-sudo systemctl start infoblox-sync.timer
-```
-
-## 💡 Tips and Tricks
-
-### 1. Always Test First
-```bash
-# ALWAYS use --dry-run first!
-python script.py --dry-run
-# Only then run for real
-python script.py --create-missing
-```
-
-### 2. Use Descriptive CSV Filenames
-```bash
-vpc_data_2025-11-02.csv  # Good - includes date
-vpc_data.csv             # OK - generic
-data.csv                 # Bad - too generic
-```
-
-### 3. Keep Backups
-```bash
-# Before major sync
-cp config.env config.env.backup
-cp vpc_data.csv vpc_data_backup_$(date +%Y%m%d).csv
-```
-
-### 4. Monitor Logs
-```bash
-# Watch logs in real-time
-tail -f aws_infoblox_vpc_manager.log | grep -i error
-```
-
-### 5. Use Environment-Specific Configs
-```bash
-# Development
-python script.py --network-view "dev" --dry-run
-
-# Production
-python script.py --network-view "prod" --create-missing
-```
-
-## 🎓 Examples
-
-### Example 1: First-Time Setup (Full Walkthrough)
-
-```bash
-# 1. Clone
-git clone https://github.com/tshoush/aws-infoblox-vpc-scripts.git
-cd aws-infoblox-vpc-scripts
-
-# 2. Setup
-cd setup && ./setup_v1.sh && cd ..
-
-# 3. Configure
-cp config.env.template config.env
-nano config.env  # Edit credentials
-
-# 4. Test
-source venv/bin/activate
-python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run
-
-# 5. Execute
-python aws_infoblox_vpc_manager_complete_v1.py -q --create-missing
-
-# 6. Verify
-grep "SUCCESS" aws_infoblox_vpc_manager.log
-```
-
-### Example 2: Update Existing Networks
-
-```bash
-# Get latest VPC data
-# (export from AWS to csv)
-
-# Dry run to see what changed
-python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run
-
-# Review output
-less aws_infoblox_vpc_manager.log
-
-# Apply changes
-python aws_infoblox_vpc_manager_complete_v1.py -q --create-missing
-```
-
-### Example 3: Multi-Region Sync
-
-```bash
-# Process each region separately
-for region in us-east-1 us-west-2 eu-west-1; do
-    echo "Processing $region..."
-    python aws_infoblox_vpc_manager_complete_v1.py \
-        --csv-file "vpc_data_${region}.csv" \
-        --network-view "AWS_${region}" \
-        --create-missing
-done
-```
-
-### Example 4: Testing with Sample Data
-
-```bash
-# Create small test dataset
-head -5 vpc_data.csv > vpc_test.csv
-
-# Test with sample
-python aws_infoblox_vpc_manager_complete_v1.py \
-    --csv-file vpc_test.csv \
-    --dry-run
-
-# If successful, run on full dataset
-python aws_infoblox_vpc_manager_complete_v1.py \
-    --csv-file vpc_data.csv \
-    --dry-run
-```
-
-## ✅ Success Criteria
-
-You've successfully set up the scripts when:
-
-- [ ] Setup script completes without errors
-- [ ] Virtual environment activates successfully
-- [ ] Config file contains your credentials
-- [ ] Dry-run completes and shows your VPCs
-- [ ] No connection errors to InfoBlox
-- [ ] Log file is created and populated
-
-## 🆘 Getting Help
-
-1. **Check the logs**: `cat aws_infoblox_vpc_manager.log`
-2. **Run with --help**: `python script.py --help`
-3. **Review documentation**:
-   - [README.md](./README.md) - Full documentation
-   - [ARCHITECTURE.md](./ARCHITECTURE.md) - Technical details
-   - [SCRIPTS_COMPARISON.md](./SCRIPTS_COMPARISON.md) - Feature comparison
-4. **Open an issue**: [GitHub Issues](https://github.com/tshoush/aws-infoblox-vpc-scripts/issues)
-
-## 🎉 You're Ready!
-
-You now have a working AWS InfoBlox VPC synchronization setup!
-
-**Next recommended reading:**
-- [ARCHITECTURE.md](./ARCHITECTURE.md) - Understand how it works
-- [SCRIPTS_COMPARISON.md](./SCRIPTS_COMPARISON.md) - Choose the right script
-- [README.md](./README.md) - Explore advanced features
-
 ---
 
-**Happy Syncing! 🚀**
-
-*Last Updated: 2025-11-02*
+**Last Updated**: 2026-02-19

@@ -2,537 +2,212 @@
 
 ## System Overview
 
-This repository contains a collection of Python scripts designed to synchronize AWS VPC network data with InfoBlox IPAM (IP Address Management) systems. The architecture is modular, allowing different scripts to address specific use cases while sharing common patterns.
+Python scripts that synchronize AWS VPC network data with InfoBlox IPAM. The recommended script (`aws_infoblox_vpc_manager_complete_v1.py`) follows a three-layer design: data ingestion, business logic, and InfoBlox API integration.
 
 ## High-Level Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         AWS Environment                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
-│  │   VPC    │  │   VPC    │  │   VPC    │  │   VPC    │       │
-│  │ 10.0.0.0 │  │ 10.1.0.0 │  │ 10.2.0.0 │  │ 10.3.0.0 │       │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘       │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              │ CSV Export
-                              ▼
+│                  GitHub Repo (tshoush/IBX-AWS_Sync)             │
+│                       vpc_data.csv                              │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │ gh CLI (GitHub API)
+                               │ fetch_csv_from_github()
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    CSV Data Files                                │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │ VPC_ID, CIDR, Name, Tags, Region, ...                    │ │
-│  │ vpc-12345, 10.0.0.0/16, Production, {...}, us-east-1, ... │ │
-│  └───────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              │ Input
-                              ▼
+│                    CSV Data File (vpc_data.csv)                  │
+│  AccountId, Region, VpcId, Name, CidrBlock, Tags, ...           │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │           Python Import Scripts (This Repository)                │
 │                                                                   │
 │  ┌────────────────────────────────────────────────────────┐    │
 │  │  Data Processing Layer                                  │    │
-│  │  • CSV parsing                                          │    │
-│  │  • Data validation                                      │    │
-│  │  • Network overlap detection                            │    │
-│  │  • CIDR block analysis                                  │    │
+│  │  • CSV parsing (pandas)                                 │    │
+│  │  • AWS Tags parsing (ast.literal_eval)                  │    │
+│  │  • CIDR block validation                                │    │
 │  └────────────────────────────────────────────────────────┘    │
 │                              │                                    │
 │  ┌────────────────────────────────────────────────────────┐    │
 │  │  Business Logic Layer                                   │    │
-│  │  • Network comparison                                   │    │
+│  │  • Network comparison (AWS vs InfoBlox)                 │    │
+│  │  • Extended Attribute analysis & mapping                │    │
 │  │  • Container hierarchy management                       │    │
-│  │  • Extended attribute mapping                           │    │
+│  │  • Priority-based creation (larger CIDRs first)         │    │
 │  │  • Dry-run simulation                                   │    │
 │  └────────────────────────────────────────────────────────┘    │
 │                              │                                    │
 │  ┌────────────────────────────────────────────────────────┐    │
 │  │  InfoBlox Integration Layer                             │    │
-│  │  • REST API client                                      │    │
-│  │  • Authentication                                       │    │
+│  │  • REST API client (requests, Basic Auth)               │    │
+│  │  • SSL verification disabled (internal servers)         │    │
 │  │  • WAPI operations                                      │    │
-│  │  • Error handling & retry logic                         │    │
+│  │  • EA definition management                             │    │
 │  └────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              │ HTTPS/REST API
-                              ▼
+└──────────────────────────────┬──────────────────────────────────┘
+                               │ HTTPS/REST (WAPI)
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    InfoBlox Grid Master                          │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  IPAM Database                                           │  │
-│  │  • Network objects                                       │  │
-│  │  • Network containers                                    │  │
-│  │  • Extended attributes                                   │  │
-│  │  • Network views                                         │  │
-│  └──────────────────────────────────────────────────────────┘  │
+│  • Network objects  • Network containers                        │
+│  • Extended attribute definitions  • Network views              │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Output Files (working directory)              │
+│  aws_infoblox_vpc_manager.log      (always)                     │
+│  missing_eas_<timestamp>.txt       (always)                     │
+│  missing_networks_<timestamp>.csv  (when missing networks exist) │
+│  rejected_networks_<timestamp>.csv (when networks are rejected)  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Component Architecture
+## Core Classes
 
-### 1. Core Components
+### `fetch_csv_from_github(repo, path, dest)`
+Module-level function. Uses `gh auth token` to obtain a GitHub API token, then downloads the file via the GitHub Contents API (base64-decoded). Runs before VPC comparison when `GITHUB_REPO` is set in `config.env`.
 
-#### InfoBloxClient Class
-Handles all communication with InfoBlox WAPI (Web API).
+### `InfoBloxClient`
+REST API wrapper for InfoBlox WAPI. Uses `requests.Session` with Basic Auth; SSL verification is hardcoded off (`session.verify = False`).
 
-```python
-class InfoBloxClient:
-    - grid_master: str          # InfoBlox server address
-    - username: str             # Authentication username
-    - password: str             # Authentication password
-    - session: requests.Session # Persistent HTTP session
+Key methods:
+- `get_network_by_cidr()` / `get_network_container_by_cidr()` — existence checks
+- `create_network()` / `create_extensible_attribute()` — write operations
+- `get_extensible_attributes()` — cached EA definition fetch
+- `ensure_required_eas_exist()` — create missing EAs in bulk
 
-    Methods:
-    - _make_request()          # Low-level HTTP request handler
-    - get_networks()           # Retrieve network objects
-    - create_network()         # Create new network
-    - create_container()       # Create network container
-    - update_network()         # Update existing network
-    - get_network_views()      # List available network views
+### `VPCManager`
+Core synchronization logic. Holds an `InfoBloxClient` and an `AWSTagParser`.
+
+Key methods:
+- `load_vpc_data()` — reads CSV with pandas
+- `parse_vpc_tags()` — applies `AWSTagParser` to every row's Tags column
+- `map_aws_tags_to_infoblox_eas()` — maps known AWS tag keys to EA names; unknown keys become `aws_<key>`
+- `compare_vpc_with_infoblox()` — classifies each VPC as matching / missing / discrepancy / container
+- `ensure_required_eas()` — collects all EA names needed by the dataset, checks InfoBlox, returns missing list; in non-dry-run mode calls `ensure_required_eas_exist()`
+- `create_missing_networks()` — creates networks sorted by prefix length (larger first)
+
+### `AWSTagParser`
+Parses the Tags column from the AWS CSV export format (`[{'Key': ..., 'Value': ...}, ...]`) into a plain `{key: value}` dict using `ast.literal_eval`.
+
+## Data Flow
+
+```
+1. GitHub fetch (if GITHUB_REPO set)
+       │
+       ▼
+2. load_vpc_data()  →  parse_vpc_tags()
+       │
+       ▼
+3. compare_vpc_with_infoblox()
+   ├── matches      (CIDR exists, EAs match)
+   ├── discrepancies (CIDR exists, EAs differ)
+   ├── missing      (CIDR not in InfoBlox)
+   ├── containers   (CIDR exists as networkcontainer)
+   └── errors
+       │
+       ▼
+4. ensure_required_eas()  →  missing_eas_<ts>.txt
+       │
+       ▼
+5. missing networks  →  missing_networks_<ts>.csv
+       │
+       ▼
+6. (if --create-missing)
+   ensure_required_eas_exist()  →  create EAs
+   create_missing_networks()    →  create networks (largest CIDR first)
+   rejected networks            →  rejected_networks_<ts>.csv
 ```
 
-#### VPCManager / PropertyManager Class
-Manages VPC/property data processing and synchronization logic.
+## Extended Attributes (EA) Mapping
 
-```python
-class VPCManager:
-    - ib_client: InfoBloxClient # InfoBlox API client
-    - logger: Logger            # Logging instance
+AWS Tags from the CSV `Tags` column are mapped to InfoBlox EA names:
 
-    Methods:
-    - load_vpc_data()          # Load and parse CSV data
-    - parse_vpc_tags()         # Extract AWS tags
-    - compare_vpc_with_infoblox() # Compare AWS vs InfoBlox
-    - create_missing_networks()   # Sync missing networks
-    - detect_overlaps()        # Find overlapping CIDRs
-    - generate_reports()       # Create detailed reports
-```
+| AWS Tag Key | InfoBlox EA Name |
+|-------------|-----------------|
+| Name | aws_name |
+| environment / Environment | environment |
+| owner / Owner | owner |
+| project / Project | project |
+| location | aws_location |
+| cloudservice | aws_cloudservice |
+| createdby | aws_created_by |
+| RequestedBy | aws_requested_by |
+| dud | aws_dud |
+| AccountId | aws_account_id |
+| Region | aws_region |
+| VpcId | aws_vpc_id |
+| Description | description |
+| *(any other key)* | aws_<key_lowercased> |
 
-### 2. Data Flow
+EA values are truncated to 255 characters. EAs are created as `STRING` type if missing.
 
-#### Step 1: Data Ingestion
-```
-CSV File → pandas DataFrame → Data Validation → Parsed Objects
-```
+## Configuration
 
-**Key Operations:**
-- CSV file reading with pandas
-- Data type validation
-- Required field checks
-- CIDR block validation using `ipaddress` module
+**Sources (first match wins):**
+1. CLI flags (`--csv-file`, `--network-view`)
+2. `config.env` file (loaded via `python-dotenv`)
+3. Defaults
 
-#### Step 2: Analysis
-```
-Parsed Data → Overlap Detection → Hierarchy Analysis → Comparison
-```
+**Key config variables:**
 
-**Key Operations:**
-- Network overlap detection using IP network math
-- Container hierarchy determination
-- Comparison with existing InfoBlox networks
-- Identification of missing/changed networks
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GRID_MASTER` | Yes | InfoBlox server IP or hostname |
+| `USERNAME` | Yes | InfoBlox username |
+| `PASSWORD` | Yes | InfoBlox password |
+| `NETWORK_VIEW` | No | InfoBlox network view (default: `default`) |
+| `CSV_FILE` | No | Local CSV path (default: `vpc_data.csv`) |
+| `GITHUB_REPO` | No | GitHub repo to fetch CSV from (e.g. `owner/repo`) |
+| `GITHUB_CSV_PATH` | No | Path within repo (default: `vpc_data.csv`) |
+| `PARENT_CONTAINER_PREFIXES` | No | Comma-separated prefix lengths for container creation |
+| `CONTAINER_HIERARCHY_MODE` | No | `strict` or `flexible` |
 
-#### Step 3: Synchronization
-```
-Missing Networks → Priority Sorting → Container Creation → Network Creation
-```
+## Script Variants
 
-**Key Operations:**
-- Priority-based ordering (larger networks first)
-- Container creation for parent networks
-- Network object creation with extended attributes
-- Transaction rollback on errors (in dry-run mode)
+| Script | Mode default | EA analysis | GitHub fetch | Best for |
+|--------|-------------|-------------|--------------|---------|
+| v1 ⭐ | interactive (use `-q` to suppress) | Always | Yes | Automation, CI/CD |
+| v2 | quiet (use `-i` for prompts) | No | No | Interactive ops |
+| working | interactive | No | No | Simple tasks |
+| prop_enhanced* | quiet | No | No | Overlap detection |
 
-#### Step 4: Reporting
-```
-Operation Results → Report Generation → CSV/JSON/Log Output
-```
+## Security Notes
 
-**Key Operations:**
-- Success/failure tracking
-- Detailed operation logs
-- CSV export of rejected networks
-- Summary statistics
-
-### 3. Script Variants
-
-#### Version 1 (Recommended): aws_infoblox_vpc_manager_complete_v1.py
-```
-┌────────────────────────────────────────────┐
-│  Explicit Mode Control                     │
-│  • -q/--quiet flag                         │
-│  • --silent flag                           │
-│  • --no-interactive flag                   │
-│  • --batch flag                            │
-└────────────────────────────────────────────┘
-         │
-         ▼
-┌────────────────────────────────────────────┐
-│  Configuration Manager                     │
-│  • Environment variables (config.env)      │
-│  • Command-line overrides                  │
-│  • Validation & defaults                   │
-└────────────────────────────────────────────┘
-         │
-         ▼
-┌────────────────────────────────────────────┐
-│  VPC Manager (Core Logic)                  │
-│  • CSV parsing                             │
-│  • Network comparison                      │
-│  • InfoBlox synchronization                │
-└────────────────────────────────────────────┘
-         │
-         ▼
-┌────────────────────────────────────────────┐
-│  InfoBlox Client (API Layer)               │
-│  • REST API calls                          │
-│  • Authentication                          │
-│  • Error handling                          │
-└────────────────────────────────────────────┘
-```
-
-**Design Philosophy:**
-- Automation-first approach
-- Explicit mode flags for clarity
-- Backward compatible with older systems
-- Best for CI/CD pipelines
-
-#### Version 2: aws_infoblox_vpc_manager_complete_v2.py
-```
-┌────────────────────────────────────────────┐
-│  Interactive Mode Control                  │
-│  • Quiet by default                        │
-│  • -i/--interactive for prompts            │
-└────────────────────────────────────────────┘
-         │
-         ▼
-┌────────────────────────────────────────────┐
-│  Enhanced Configuration UI                 │
-│  • Interactive network view selection      │
-│  • Dynamic CSV file picker                 │
-│  • Configuration editor                    │
-└────────────────────────────────────────────┘
-         │
-         ▼
-┌────────────────────────────────────────────┐
-│  VPC Manager (Same Core)                   │
-└────────────────────────────────────────────┘
-```
-
-**Design Philosophy:**
-- Modern quiet-by-default approach
-- Interactive mode as opt-in feature
-- Enhanced user experience for manual operations
-
-#### Property Import Scripts (prop_infoblox_import_*.py)
-```
-┌────────────────────────────────────────────┐
-│  Property Data Ingestion                   │
-│  • Properties file parsing                 │
-│  • Extended attributes extraction          │
-└────────────────────────────────────────────┘
-         │
-         ▼
-┌────────────────────────────────────────────┐
-│  Network Overlap Detection                 │
-│  • CIDR overlap analysis                   │
-│  • Container identification                │
-│  • Hierarchical relationships              │
-└────────────────────────────────────────────┘
-         │
-         ▼
-┌────────────────────────────────────────────┐
-│  Smart Container Management                │
-│  • Auto-container creation                 │
-│  • Parent-child relationships              │
-│  • Overlap resolution strategies           │
-└────────────────────────────────────────────┘
-```
-
-**Design Philosophy:**
-- Focus on property-based imports
-- Advanced overlap detection and resolution
-- Hierarchical network container management
-
-## Data Models
-
-### Network Object
-```python
-{
-    'cidr': '10.0.0.0/16',              # CIDR block
-    'network_view': 'default',          # InfoBlox network view
-    'comment': 'Production VPC',        # Description
-    'extattrs': {                       # Extended attributes
-        'AWS_VPC_ID': 'vpc-12345',
-        'AWS_Region': 'us-east-1',
-        'Environment': 'production',
-        'Owner': 'infrastructure-team'
-    }
-}
-```
-
-### Container Object
-```python
-{
-    'cidr': '10.0.0.0/8',              # Parent CIDR block
-    'network_view': 'default',          # InfoBlox network view
-    'comment': 'AWS Networks Container',
-    'extattrs': {
-        'Type': 'Container',
-        'Purpose': 'AWS VPC Organization'
-    }
-}
-```
-
-### VPC Data (from CSV)
-```python
-{
-    'VpcId': 'vpc-12345',
-    'CidrBlock': '10.0.0.0/16',
-    'State': 'available',
-    'Tags': {
-        'Name': 'Production VPC',
-        'Environment': 'prod',
-        'Owner': 'team-name'
-    },
-    'Region': 'us-east-1',
-    'IsDefault': False
-}
-```
-
-## Integration Points
-
-### 1. InfoBlox WAPI Integration
-
-**Endpoint Structure:**
-```
-https://{grid_master}/wapi/v2.10/{object_type}
-```
-
-**Common Object Types:**
-- `network`: Network objects
-- `networkcontainer`: Network containers
-- `networkview`: Network views
-- `extensibleattributedef`: Extended attribute definitions
-
-**Authentication:**
-- HTTP Basic Authentication
-- Username/Password credentials
-- Session persistence for performance
-
-**API Operations:**
-```python
-# GET - Query objects
-GET /wapi/v2.10/network?network_view=default
-
-# POST - Create object
-POST /wapi/v2.10/network
-Body: {"network": "10.0.0.0/16", "network_view": "default"}
-
-# PUT - Update object
-PUT /wapi/v2.10/network/{ref}
-Body: {"comment": "Updated description"}
-
-# DELETE - Remove object
-DELETE /wapi/v2.10/network/{ref}
-```
-
-### 2. CSV Data Integration
-
-**Expected CSV Format:**
-```csv
-VpcId,CidrBlock,State,Tags,Region,IsDefault
-vpc-12345,"10.0.0.0/16",available,"{""Name"": ""Prod VPC""}",us-east-1,False
-```
-
-**Parsing Strategy:**
-- pandas for CSV reading
-- ast.literal_eval() for JSON-like tag parsing
-- Data validation and cleaning
-- Error handling for malformed data
-
-### 3. Configuration Integration
-
-**Configuration Sources (Priority Order):**
-1. Command-line arguments (highest priority)
-2. Environment variables
-3. config.env file
-4. Default values (lowest priority)
-
-**Configuration Loading:**
-```python
-from dotenv import load_dotenv
-load_dotenv('config.env')
-
-grid_master = args.grid_master or os.getenv('GRID_MASTER')
-```
-
-## Error Handling Strategy
-
-### 1. Validation Errors
-```python
-try:
-    network = ipaddress.ip_network(cidr, strict=False)
-except ValueError as e:
-    logger.error(f"Invalid CIDR: {cidr}")
-    # Add to rejected networks list
-    continue
-```
-
-### 2. API Errors
-```python
-try:
-    response = session.post(url, json=data)
-    response.raise_for_status()
-except requests.exceptions.HTTPError as e:
-    if e.response.status_code == 409:
-        logger.warning("Network already exists")
-    else:
-        logger.error(f"API error: {e}")
-        # Retry logic or rollback
-```
-
-### 3. Dry-Run Mode
-```python
-if dry_run:
-    logger.info(f"[DRY-RUN] Would create network: {cidr}")
-    # Simulate success
-    return {'success': True, 'ref': 'simulated-ref'}
-else:
-    # Actual API call
-    return ib_client.create_network(cidr)
-```
-
-## Performance Considerations
-
-### 1. Batch Processing
-- Process networks in batches
-- Use connection pooling (requests.Session)
-- Implement parallel processing where applicable
-
-### 2. Caching
-- Cache InfoBlox network views
-- Cache existing networks for comparison
-- Minimize redundant API calls
-
-### 3. Logging Strategy
-- Use appropriate log levels (DEBUG, INFO, WARNING, ERROR)
-- Structured logging for easier parsing
-- Log rotation for long-running processes
-
-## Security Architecture
-
-### 1. Credential Management
-```
-config.env (gitignored) → Environment Variables → Application
-```
-
-**Best Practices:**
-- Never commit credentials to git
-- Use environment variables in production
-- Rotate credentials regularly
-- Use read-only accounts where possible
-
-### 2. SSL/TLS
-- All API communications over HTTPS
-- SSL verification enabled by default
-- Option to disable for testing (not recommended)
-
-### 3. Input Validation
-- Validate all CIDR blocks
-- Sanitize user inputs
-- Prevent injection attacks
-- Validate file paths
-
-## Testing Strategy
-
-### 1. Dry-Run Testing
-```bash
-# Test without making changes
-python script.py --dry-run
-```
-
-### 2. Incremental Testing
-```bash
-# Test with small dataset first
-python script.py --csv-file sample_10_vpcs.csv --dry-run
-```
-
-### 3. Validation Testing
-```bash
-# Compare results
-python script.py --dry-run > expected_output.txt
-diff expected_output.txt actual_output.txt
-```
+- `config.env` is gitignored; never commit credentials
+- SSL verification is disabled for InfoBlox (`session.verify = False`) — standard for internal WAPI endpoints
+- GitHub access uses `gh auth token`; no separate token storage required
 
 ## Deployment Patterns
 
-### 1. Manual Execution
+### Manual
 ```bash
 source venv/bin/activate
 python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run
+python aws_infoblox_vpc_manager_complete_v1.py -q --create-missing
 ```
 
-### 2. Scheduled Execution (Cron)
+### Cron
 ```bash
-# crontab -e
-0 2 * * * cd /path/to/scripts && source venv/bin/activate && python aws_infoblox_vpc_manager_complete_v1.py --silent --create-missing >> /var/log/infoblox-sync.log 2>&1
+0 2 * * * cd /path/to/scripts && source venv/bin/activate && \
+  python aws_infoblox_vpc_manager_complete_v1.py --silent --create-missing \
+  >> /var/log/infoblox-sync.log 2>&1
 ```
 
-### 3. CI/CD Pipeline
+### CI/CD (GitLab example)
 ```yaml
-# Example GitLab CI
 infoblox-sync:
   script:
-    - pip install -r requirements.txt
+    - pip install -r setup/requirements_v1.txt
     - python aws_infoblox_vpc_manager_complete_v1.py -q --create-missing
   only:
     - schedules
 ```
 
-## Monitoring and Observability
-
-### 1. Logging
-- File logging: `aws_infoblox_vpc_manager.log`
-- Console logging: Real-time feedback
-- Log levels for filtering
-
-### 2. Metrics
-- Networks processed
-- Networks created
-- Networks updated
-- Errors encountered
-- Execution time
-
-### 3. Reporting
-- CSV reports for rejected networks
-- Summary reports
-- Extended attribute analysis
-
-## Future Architecture Considerations
-
-### 1. Potential Enhancements
-- Database backend for state management
-- Web UI for monitoring and control
-- REST API wrapper for remote execution
-- Multi-region support
-- AWS API integration (direct VPC querying)
-
-### 2. Scalability
-- Message queue for large-scale processing
-- Distributed execution
-- Microservices architecture
-- Containerization (Docker)
-
-### 3. High Availability
-- Multiple InfoBlox Grid Master support
-- Failover mechanisms
-- Transaction rollback
-- State persistence
-
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-11-02
-**Maintained By**: Repository Contributors
+**Document Version**: 2.0
+**Last Updated**: 2026-02-19
