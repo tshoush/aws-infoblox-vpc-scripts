@@ -18,6 +18,7 @@ config.env
 !config.env.template
 
 # CSV data files
+vpc_data.csv
 *.csv
 !example.csv
 
