@@ -34,22 +34,37 @@ import socket
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-def fetch_csv_from_github(repo: str, path: str = 'vpc_data.csv', dest: str = 'vpc_data.csv') -> str:
-    """Download a file from a private GitHub repo using gh CLI credentials."""
-    try:
-        token = subprocess.check_output(['gh', 'auth', 'token'], text=True).strip()
-    except Exception as e:
-        raise RuntimeError(f"Could not get GitHub token via 'gh auth token': {e}")
+def fetch_csv_from_url(url: str, token: str = None, dest: str = 'vpc_data.csv') -> str:
+    """Download a CSV file from any URL with optional Bearer token auth.
 
-    url = f"https://api.github.com/repos/{repo}/contents/{path}"
-    headers = {
-        'Authorization': f'token {token}',
-        'Accept': 'application/vnd.github.v3+json'
-    }
-    response = requests.get(url, headers=headers)
+    For GitHub API URLs (api.github.com) without a token, falls back to
+    'gh auth token' automatically. All other URLs use a plain GET, with
+    an Authorization: Bearer header when a token is provided.
+    """
+    headers = {}
+    is_github_api = 'api.github.com' in url
+
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+        if is_github_api:
+            headers['Accept'] = 'application/vnd.github.v3+json'
+    elif is_github_api:
+        try:
+            gh_token = subprocess.check_output(['gh', 'auth', 'token'], text=True).strip()
+            headers['Authorization'] = f'token {gh_token}'
+            headers['Accept'] = 'application/vnd.github.v3+json'
+        except Exception as e:
+            raise RuntimeError(f"No CSV_SOURCE_TOKEN set and 'gh auth token' failed: {e}")
+
+    response = requests.get(url, headers=headers, verify=False)
     response.raise_for_status()
 
-    content = base64.b64decode(response.json()['content'])
+    # GitHub Contents API returns base64-encoded JSON; everything else is raw bytes
+    if is_github_api and response.headers.get('content-type', '').startswith('application/json'):
+        content = base64.b64decode(response.json()['content'])
+    else:
+        content = response.content
+
     with open(dest, 'wb') as f:
         f.write(content)
 
@@ -139,16 +154,16 @@ def main():
         # Use command line argument if provided, otherwise use environment variable
         csv_file = args.csv_file if args.csv_file != 'vpc_data.csv' else csv_file_from_env
 
-        # Fetch CSV from GitHub if configured
-        github_repo = os.getenv('GITHUB_REPO', '')
-        github_csv_path = os.getenv('GITHUB_CSV_PATH', 'vpc_data.csv')
-        if github_repo:
-            print(f"\n📥 Fetching {github_csv_path} from GitHub: {github_repo}")
+        # Fetch CSV from remote source if configured
+        csv_source_url = os.getenv('CSV_SOURCE_URL', '')
+        csv_source_token = os.getenv('CSV_SOURCE_TOKEN', '') or None
+        if csv_source_url:
+            print(f"\n📥 Fetching CSV from: {csv_source_url}")
             try:
-                fetch_csv_from_github(github_repo, github_csv_path, csv_file)
+                fetch_csv_from_url(csv_source_url, csv_source_token, csv_file)
                 print(f"   ✅ Downloaded to: {csv_file}")
             except Exception as e:
-                logger.error(f"Failed to fetch CSV from GitHub: {e}")
+                logger.error(f"Failed to fetch CSV from remote source: {e}")
                 return 1
 
         logger.info(f"Loading VPC data from {csv_file}...")
