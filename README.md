@@ -40,6 +40,11 @@ This repository contains 7 Python scripts for managing AWS VPC data imports to I
 cd setup && ./setup_v1.sh
 ```
 
+The setup script:
+1. Creates a Python virtual environment
+2. Installs all dependencies (`pip install -r requirements_v1.txt`)
+3. Creates `config.env` from template (if missing)
+
 ### Configuration
 
 Copy and edit `config.env`:
@@ -51,9 +56,10 @@ USERNAME=your-username
 PASSWORD=your-password
 CSV_FILE=vpc_data.csv
 
-# Optional: fetch vpc_data.csv from a private GitHub repo (uses gh CLI credentials)
-GITHUB_REPO=owner/repo-name
-GITHUB_CSV_PATH=vpc_data.csv
+# Optional: fetch vpc_data.csv from a remote source (SSH or HTTPS)
+CSV_SOURCE_URL=git@github.com:owner/private-repo.git
+# CSV_SOURCE_URL=https://raw.githubusercontent.com/owner/repo/main/vpc_data.csv
+# CSV_SOURCE_TOKEN=your_github_token  # Only needed for HTTPS without gh CLI
 ```
 
 ### Running
@@ -68,16 +74,27 @@ python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run
 python aws_infoblox_vpc_manager_complete_v1.py -q --create-missing
 ```
 
-## 📥 GitHub CSV Source
+## 📥 Remote CSV Source
 
-When `GITHUB_REPO` is set in `config.env`, the script automatically downloads the latest `vpc_data.csv` from that repo at startup using your local `gh` CLI credentials. No token configuration needed — it reuses whatever `gh auth login` is already set up.
+The script supports downloading `vpc_data.csv` from remote sources:
 
+### SSH URLs (Private Repos)
+```env
+CSV_SOURCE_URL=git@github.com:owner/private-repo.git
 ```
-📥 Fetching vpc_data.csv from GitHub: owner/repo-name
-   ✅ Downloaded to: vpc_data.csv
+Uses SSH keys from `~/.ssh` — ensure your SSH key is in ssh-agent:
+```bash
+ssh-add ~/.ssh/your-key
 ```
 
-To disable temporarily, comment out `GITHUB_REPO` in `config.env`.
+### HTTPS URLs (Public or with Token)
+```env
+CSV_SOURCE_URL=https://raw.githubusercontent.com/owner/repo/main/vpc_data.csv
+CSV_SOURCE_URL=https://api.github.com/repos/owner/repo/contents/vpc_data.csv
+# GitHub API URLs automatically use 'gh auth token' if available
+```
+
+To disable temporarily, comment out `CSV_SOURCE_URL` in `config.env`.
 
 ## 🏷️ Extended Attributes Analysis
 
@@ -141,11 +158,24 @@ All output files are written to the working directory:
 
 ## 🤖 Automation
 
+### Cron Job Example
+
 ```bash
 # Example cron job (daily at 2 AM)
 0 2 * * * cd /path/to/scripts && source venv/bin/activate && python aws_infoblox_vpc_manager_complete_v1.py --silent --create-missing >> /var/log/infoblox-sync.log 2>&1
 ```
 
+### For SSH-based CSV Sources
+
+If using SSH URLs for `CSV_SOURCE_URL`, ensure SSH agent is available in the cron environment:
+
+```bash
+# In crontab, add SSH_AUTH_SOCK and SSH_AGENT_PID before the job
+0 2 * * * export SSH_AUTH_SOCK=/tmp/ssh-agent-sock && cd /path/to/scripts && source venv/bin/activate && python aws_infoblox_vpc_manager_complete_v1.py --silent --create-missing >> /var/log/infoblox-sync.log 2>&1
+```
+
+Or use a systemd timer with the user's SSH agent socket.
+
 ---
 
-**Last Updated**: 2026-02-19
+**Last Updated**: 2026-02-23

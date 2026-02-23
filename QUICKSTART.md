@@ -7,10 +7,12 @@ Get started with AWS InfoBlox VPC Management Scripts in 5 minutes!
 Before you begin, ensure you have:
 
 - [ ] Python 3.8 or higher installed
-- [ ] Git and [GitHub CLI (`gh`)](https://cli.github.com/) installed and authenticated
+- [ ] Git installed and authenticated (with SSH key setup if using private repos)
+- [ ] SSH key in `~/.ssh` (for SSH-based CSV sources)
 - [ ] Access to InfoBlox Grid Master
 - [ ] InfoBlox credentials (username/password)
-- [ ] AWS VPC data in CSV format (or access to the GitHub repo that holds it)
+- [ ] AWS VPC data in CSV format (or access to a GitHub repo that holds it)
+- [ ] [GitHub CLI (`gh`)](https://cli.github.com/) installed (optional, only needed for GitHub HTTPS API URLs)
 
 ## 🚀 5-Minute Quick Start
 
@@ -44,12 +46,20 @@ USERNAME=admin
 PASSWORD=your-password
 CSV_FILE=vpc_data.csv
 
-# Optional: fetch vpc_data.csv automatically from a private GitHub repo
-GITHUB_REPO=tshoush/IBX-AWS_Sync
-GITHUB_CSV_PATH=vpc_data.csv
+# Optional: fetch vpc_data.csv automatically from a remote source
+# SSH URL (uses keys from ~/.ssh - recommended for private repos)
+CSV_SOURCE_URL=git@github.com:owner/private-repo.git
+
+# OR HTTPS URL (for public repos or with GitHub token)
+# CSV_SOURCE_URL=https://raw.githubusercontent.com/owner/repo/main/vpc_data.csv
+# CSV_SOURCE_TOKEN=ghp_xxxxxxxxxxxxx  # Only needed if repo is private
 ```
 
-> **Note:** The config key is `USERNAME`, not `INFOBLOX_USERNAME`.
+**Important notes:**
+- The config key is `USERNAME`, not `INFOBLOX_USERNAME`
+- For SSH URLs, ensure your SSH key is registered: `ssh-add ~/.ssh/your-key`
+- For GitHub HTTPS URLs, the script automatically uses `gh auth token` if available
+- If `CSV_SOURCE_URL` is not set, the script looks for a local `vpc_data.csv` file
 
 ### Step 4: Test Run
 
@@ -58,13 +68,13 @@ source venv/bin/activate
 python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run
 ```
 
-**Expected output:**
+**Expected output (with SSH CSV source):**
 
 ```
 🤖 Running in non-interactive mode - reading configuration from file...
 ✅ All configuration loaded from config.env
 
-📥 Fetching vpc_data.csv from GitHub: tshoush/IBX-AWS_Sync
+📥 Fetching CSV from: git@github.com:owner/private-repo.git
    ✅ Downloaded to: vpc_data.csv
 
 🔗 Connecting to InfoBlox Grid Master: 192.168.1.224
@@ -119,11 +129,40 @@ This will:
 2. Create any missing Extended Attributes in InfoBlox
 3. Create the missing networks with AWS tags mapped to EAs
 
-## 📥 GitHub CSV Source
+## 📥 Remote CSV Source Setup
 
-If `GITHUB_REPO` is set in `config.env`, the script fetches the CSV automatically at each run using your `gh` CLI credentials. To update the data, push a new `vpc_data.csv` to the GitHub repo — the next script run will pick it up.
+### SSH-based Private Repos (Recommended)
 
-To bypass GitHub and use a local CSV instead, comment out `GITHUB_REPO` in `config.env`.
+For private GitHub repos using SSH:
+
+```bash
+# 1. Add your SSH key to the agent
+ssh-add ~/.ssh/your-github-key
+
+# 2. Set in config.env
+CSV_SOURCE_URL=git@github.com:owner/private-repo.git
+
+# 3. Script fetches on each run
+python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run
+```
+
+### HTTPS-based Public Repos
+
+```bash
+# Public repo - no token needed
+CSV_SOURCE_URL=https://raw.githubusercontent.com/owner/repo/main/vpc_data.csv
+
+# Private repo - with token
+CSV_SOURCE_URL=https://api.github.com/repos/owner/repo/contents/vpc_data.csv
+CSV_SOURCE_TOKEN=ghp_your_github_token
+```
+
+### Update Strategy
+
+To update the data:
+1. Push a new `vpc_data.csv` to your remote repo
+2. The next script run automatically fetches the latest version
+3. Comment out `CSV_SOURCE_URL` to use a local CSV instead
 
 ## 📖 Common Commands
 
@@ -146,16 +185,29 @@ tail -f aws_infoblox_vpc_manager.log
 ### "Missing values: USERNAME"
 The config key is `USERNAME`, not `INFOBLOX_USERNAME`. Check your `config.env`.
 
-### "Could not get GitHub token via 'gh auth token'"
-Run `gh auth login` to authenticate the GitHub CLI, then retry.
+### SSH: "Permission denied (publickey)"
+Your SSH key isn't registered. Add it to the SSH agent:
+```bash
+ssh-add ~/.ssh/your-github-key
+ssh-add -l  # Verify it's registered
+```
+
+### SSH: "No CSV file found in SSH repository"
+The script clones the repo but couldn't find a CSV file. Ensure `vpc_data.csv` exists in the root of your repo.
+
+### HTTPS: "Failed to fetch CSV from remote source: 404"
+- For public HTTPS URLs: Verify the URL is correct
+- For GitHub API URLs: Ensure the repo is public or add `CSV_SOURCE_TOKEN=ghp_...`
+- For GitHub HTTPS: Run `gh auth login` if using HTTPS API endpoint
 
 ### "No such file or directory: 'vpc_data.csv'"
-Either set `GITHUB_REPO` in `config.env` to fetch it automatically, or copy the CSV to the working directory manually.
+Either set `CSV_SOURCE_URL` in `config.env` to fetch it automatically, or copy the CSV to the working directory manually.
 
 ### "Connection refused" or cannot connect to InfoBlox
 Verify `GRID_MASTER` is reachable: `ping 192.168.1.224`. SSL verification is disabled by default for InfoBlox (common for internal servers).
 
 ### "Module not found" errors
+The setup script should have installed dependencies, but if needed:
 ```bash
 source venv/bin/activate
 pip install -r setup/requirements_v1.txt
@@ -172,13 +224,44 @@ All files are written to the working directory (not a `reports/` subdirectory):
 | `missing_networks_<timestamp>.csv` | Networks in CSV not yet in InfoBlox |
 | `rejected_networks_<timestamp>.csv` | Networks skipped during creation (e.g. overlaps) |
 
+## 🚀 Deploying to Another System
+
+To move this project to a new system, you only need:
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/tshoush/aws-infoblox-vpc-scripts.git
+cd aws-infoblox-vpc-scripts
+
+# 2. Run setup (creates venv and installs dependencies automatically)
+cd setup && ./setup_v1.sh && cd ..
+
+# 3. Configure
+cp config.env.template config.env
+# Edit config.env with your InfoBlox credentials and CSV source
+
+# 4. Set up SSH key if using SSH-based CSV source
+ssh-add ~/.ssh/your-github-key
+
+# 5. Test
+source venv/bin/activate
+python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run
+```
+
+**That's it!** The `setup_v1.sh` script handles everything:
+- Creates Python virtual environment (`venv/`)
+- Runs `pip install -r setup/requirements_v1.txt`
+- Creates `config.env` if missing
+
+No need to manually run `pip install` — it's done by the setup script.
+
 ## 🔄 Daily Workflow
 
 ```bash
 cd aws-infoblox-vpc-scripts
 source venv/bin/activate
 
-# 1. Dry-run to see what's changed (also downloads latest CSV from GitHub)
+# 1. Dry-run to see what's changed (also downloads latest CSV)
 python aws_infoblox_vpc_manager_complete_v1.py -q --dry-run
 
 # 2. Review
@@ -198,4 +281,4 @@ python aws_infoblox_vpc_manager_complete_v1.py -q --create-missing
 
 ---
 
-**Last Updated**: 2026-02-19
+**Last Updated**: 2026-02-23

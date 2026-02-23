@@ -29,18 +29,29 @@ import subprocess
 from dotenv import load_dotenv
 import getpass
 import socket
+import tempfile
+import shutil
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def fetch_csv_from_url(url: str, token: str = None, dest: str = 'vpc_data.csv') -> str:
-    """Download a CSV file from any URL with optional Bearer token auth.
+    """Download a CSV file from URL, SSH, or GitHub.
 
-    For GitHub API URLs (api.github.com) without a token, falls back to
-    'gh auth token' automatically. All other URLs use a plain GET, with
-    an Authorization: Bearer header when a token is provided.
+    Supports:
+    - SSH URLs: git@github.com:owner/repo.git or ssh://git@github.com/owner/repo.git
+      Uses SSH keys from ~/.ssh for authentication
+    - GitHub API URLs: automatically uses 'gh auth token'
+    - HTTPS URLs: with optional Bearer token authentication
     """
+    # Detect SSH URLs
+    is_ssh = url.startswith('git@') or url.startswith('ssh://')
+
+    if is_ssh:
+        return _fetch_via_git_ssh(url, dest)
+
+    # Handle HTTP/HTTPS URLs
     headers = {}
     is_github_api = 'api.github.com' in url
 
@@ -69,6 +80,64 @@ def fetch_csv_from_url(url: str, token: str = None, dest: str = 'vpc_data.csv') 
         f.write(content)
 
     return dest
+
+
+def _fetch_via_git_ssh(url: str, dest: str = 'vpc_data.csv') -> str:
+    """Clone a git repo via SSH and extract the CSV file.
+
+    For SSH URLs like 'git@github.com:owner/repo.git', this will:
+    1. Clone the repo to a temporary directory (shallow clone for speed)
+    2. Look for a CSV file in the root or common locations
+    3. Copy it to the destination
+    4. Clean up the temporary directory
+    """
+    temp_dir = tempfile.mkdtemp()
+    try:
+        # Shallow clone for speed
+        subprocess.run(
+            ['git', 'clone', '--depth', '1', url, temp_dir],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+
+        # Look for vpc_data.csv or similar CSV files in common locations
+        search_paths = [
+            os.path.join(temp_dir, 'vpc_data.csv'),
+            os.path.join(temp_dir, 'vpc_data', 'vpc_data.csv'),
+            os.path.join(temp_dir, 'data', 'vpc_data.csv'),
+        ]
+
+        # If not found, look for any CSV file
+        csv_file = None
+        for path in search_paths:
+            if os.path.isfile(path):
+                csv_file = path
+                break
+
+        if not csv_file:
+            # Fall back to finding any CSV file in the repo
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if file.endswith('.csv'):
+                        csv_file = os.path.join(root, file)
+                        break
+                if csv_file:
+                    break
+
+        if not csv_file:
+            raise FileNotFoundError(f"No CSV file found in SSH repository: {url}")
+
+        # Copy to destination
+        shutil.copy(csv_file, dest)
+        logger.info(f"Downloaded CSV from SSH URL: {url} -> {dest}")
+        return dest
+
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to clone SSH repository: {e.stderr}")
+    finally:
+        # Clean up temp directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 # Configure logging
 logging.basicConfig(
