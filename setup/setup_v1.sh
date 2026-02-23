@@ -69,8 +69,8 @@ pip install --upgrade pip
 
 # Install dependencies
 echo ""
-echo "📦 Installing dependencies from requirements.txt..."
-pip install -r requirements.txt
+echo "📦 Installing dependencies from requirements_v1.txt..."
+pip install -r requirements_v1.txt
 
 # Check for config file
 echo ""
